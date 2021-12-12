@@ -6,6 +6,7 @@ import re
 from django.db.backends.base.schema import BaseDatabaseSchemaEditor
 from django.db.utils import DatabaseError
 from django.utils import six
+from django.utils.duration import duration_iso_string
 from django.utils.text import force_text
 
 
@@ -23,6 +24,8 @@ class DatabaseSchemaEditor(BaseDatabaseSchemaEditor):
     def quote_value(self, value):
         if isinstance(value, (datetime.date, datetime.time, datetime.datetime)):
             return "'%s'" % value
+        elif isinstance(value, datetime.timedelta):
+            return "'%s'" % duration_iso_string(value)
         elif isinstance(value, six.string_types):
             return "'%s'" % six.text_type(value).replace("\'", "\'\'")
         elif isinstance(value, six.buffer_types):

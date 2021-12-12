@@ -10,8 +10,8 @@ from django.db.models import Model
 from django.db.models.deletion import CASCADE, PROTECT
 from django.db.models.fields import (
     AutoField, BigAutoField, BigIntegerField, BinaryField, BooleanField,
-    CharField, DateField, DateTimeField, IntegerField, PositiveIntegerField,
-    SlugField, TextField, TimeField,
+    CharField, DateField, DateTimeField, DurationField, IntegerField,
+    PositiveIntegerField, SlugField, TextField, TimeField,
 )
 from django.db.models.fields.related import (
     ForeignKey, ForeignObject, ManyToManyField, OneToOneField,
@@ -490,6 +490,19 @@ class SchemaTests(TransactionTestCase):
         # MySQL annoyingly uses the same backend, so it'll come back as one of
         # these two types.
         self.assertIn(columns['bits'][0], ("BinaryField", "TextField"))
+
+    def test_add_field_durationfield_with_default(self):
+        with connection.schema_editor() as editor:
+            editor.create_model(Author)
+        new_field = DurationField(default=datetime.timedelta(minutes=10))
+        new_field.set_attributes_from_name('duration')
+        with connection.schema_editor() as editor:
+            editor.add_field(Author, new_field)
+        columns = self.column_classes(Author)
+        self.assertEqual(
+            columns['duration'][0],
+            connection.features.introspected_field_types['DurationField'],
+        )
 
     @unittest.skipUnless(connection.vendor == 'mysql', "MySQL specific")
     def test_add_binaryfield_mediumblob(self):
@@ -1355,6 +1368,32 @@ class SchemaTests(TransactionTestCase):
                 break
         else:
             self.fail("No check constraint for height found")
+
+    @skipUnlessDBFeature('supports_column_check_constraints', 'can_introspect_check_constraints')
+    @isolate_apps('schema')
+    def test_check_constraint_timedelta_param(self):
+        class DurationModel(Model):
+            duration = DurationField()
+
+            class Meta:
+                app_label = 'schema'
+
+        with connection.schema_editor() as editor:
+            editor.create_model(DurationModel)
+        self.isolated_local_models = [DurationModel]
+        constraint_name = 'duration_gte_5_minutes'
+        constraint = CheckConstraint(
+            check=Q(duration__gt=datetime.timedelta(minutes=5)),
+            name=constraint_name,
+        )
+        DurationModel._meta.constraints = [constraint]
+        with connection.schema_editor() as editor:
+            editor.add_constraint(DurationModel, constraint)
+        constraints = self.get_constraints(DurationModel._meta.db_table)
+        self.assertIn(constraint_name, constraints)
+        with self.assertRaises(IntegrityError), atomic():
+            DurationModel.objects.create(duration=datetime.timedelta(minutes=4))
+        DurationModel.objects.create(duration=datetime.timedelta(minutes=10))
 
     def test_unique(self):
         """
